@@ -32,9 +32,9 @@ object RemoteCatalogDeploySingleConfig {
     )
   )
   val format                         = new Format[RemoteCatalogDeploySingleConfig] {
-    override def reads(json: JsValue): JsResult[RemoteCatalogDeploySingleConfig]  =
+    override def reads(json: JsValue): JsResult[RemoteCatalogDeploySingleConfig] =
       JsSuccess(RemoteCatalogDeploySingleConfig(json))
-    override def writes(o: RemoteCatalogDeploySingleConfig): JsValue = o.json
+    override def writes(o: RemoteCatalogDeploySingleConfig): JsValue             = o.json
   }
 }
 
@@ -113,9 +113,9 @@ object RemoteCatalogDeployManyConfig {
     )
   )
   val format                         = new Format[RemoteCatalogDeployManyConfig] {
-    override def reads(json: JsValue): JsResult[RemoteCatalogDeployManyConfig]  =
+    override def reads(json: JsValue): JsResult[RemoteCatalogDeployManyConfig] =
       JsSuccess(RemoteCatalogDeployManyConfig(json))
-    override def writes(o: RemoteCatalogDeployManyConfig): JsValue = o.json
+    override def writes(o: RemoteCatalogDeployManyConfig): JsValue             = o.json
   }
 }
 
@@ -201,7 +201,7 @@ object RemoteCatalogDeployWebhookConfig {
           )
         )
       ),
-      "source_type" -> Json.obj(
+      "source_type"  -> Json.obj(
         "type"  -> "select",
         "label" -> "Source type",
         "props" -> Json.obj(
@@ -214,9 +214,9 @@ object RemoteCatalogDeployWebhookConfig {
     )
   )
   val format                         = new Format[RemoteCatalogDeployWebhookConfig] {
-    override def reads(json: JsValue): JsResult[RemoteCatalogDeployWebhookConfig]  =
+    override def reads(json: JsValue): JsResult[RemoteCatalogDeployWebhookConfig] =
       JsSuccess(RemoteCatalogDeployWebhookConfig(json))
-    override def writes(o: RemoteCatalogDeployWebhookConfig): JsValue = o.json
+    override def writes(o: RemoteCatalogDeployWebhookConfig): JsValue             = o.json
   }
 }
 
@@ -257,7 +257,7 @@ class RemoteCatalogDeployWebhook extends NgBackendCall {
       case Some(ext) =>
         ctx.jsonWithTypedBody.flatMap { payload =>
           CatalogSources.source(config.sourceType) match {
-            case None         =>
+            case None                                    =>
               BackendCallResponse(
                 NgPluginHttpResponse.fromResult(
                   Results.BadRequest(Json.obj("error" -> s"Unknown source type: ${config.sourceType}"))
@@ -271,7 +271,7 @@ class RemoteCatalogDeployWebhook extends NgBackendCall {
                 ),
                 None
               ).rightf
-            case Some(source) =>
+            case Some(source)                            =>
               val possibleCatalogs = ext.states.allCatalogs().filter { c =>
                 c.enabled && config.catalogRefs.contains(c.id)
               }
