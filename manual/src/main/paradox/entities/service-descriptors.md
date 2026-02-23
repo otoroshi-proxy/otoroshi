@@ -1,5 +1,10 @@
 # Service descriptors
 
+
+@@@ warning
+Service Descriptors are now deprecated and will sunset soon (probably in 2026). You can use @ref:[Routes](./routes.md) instead. You can read more about sunsetting Service Descriptors @ref:[here](../topics/deprecating-sd.md). 
+@@@
+
 Services or service descriptor, let you declare how to proxy a call from a domain name to another domain name (or multiple domain names). 
 
 @@@ div { .centered-img }
