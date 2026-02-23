@@ -90,6 +90,8 @@ Let’s say you have an API exposed on http://192.168.0.42 and I want to expose 
 * `Hmac secret`: used to verify the token
 * `Base64 encoded secret`: if enabled, the extracted token will be base64 decoded before it is verifier
 
+You can check the @ref:[Otoroshi communication protocol](../topics/otoroshi-protocol.md) page for more informations about it. 
+
 ### Authentication
 
 * `Enforce user authentication`: when enabled, user will be allowed to use the service (UI) only if they are registered users of the chosen authentication module.
