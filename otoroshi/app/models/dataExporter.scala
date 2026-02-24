@@ -752,7 +752,7 @@ case class PostgresExporterSettings(
     database: String = "otoroshi",
     user: String = "otoroshi",
     password: String = "otoroshi",
-    schema: String = "public",
+    schema: String = "otoroshi",
     table: String = "otoroshi_events",
     poolSize: Int = 5,
     ssl: Boolean = false
