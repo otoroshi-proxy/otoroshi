@@ -770,7 +770,7 @@ object PostgresExporterSettings {
         database = json.select("database").asOptString.getOrElse("otoroshi"),
         user     = json.select("user").asOptString.getOrElse("otoroshi"),
         password = json.select("password").asOptString.getOrElse("otoroshi"),
-        schema   = json.select("schema").asOptString.getOrElse("public"),
+        schema   = json.select("schema").asOptString.getOrElse("otoroshi"),
         table    = json.select("table").asOptString.getOrElse("otoroshi_events"),
         poolSize = json.select("pool_size").asOptInt.getOrElse(5),
         ssl      = json.select("ssl").asOptBoolean.getOrElse(false)
