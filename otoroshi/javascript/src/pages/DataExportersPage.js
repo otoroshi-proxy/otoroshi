@@ -2616,7 +2616,7 @@ const possibleExporterConfigFormValues = {
       },
       schema: {
         type: 'string',
-        props: { label: 'Schema', placeholder: 'public' },
+        props: { label: 'Schema', placeholder: 'otoroshi' },
       },
       table: {
         type: 'string',
