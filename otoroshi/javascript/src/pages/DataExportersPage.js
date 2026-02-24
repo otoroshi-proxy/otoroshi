@@ -2583,6 +2583,55 @@ const possibleExporterConfigFormValues = {
       },
     },
   },
+  postgresql: {
+    label: 'PostgreSQL',
+    flow: ['uri', 'host', 'port', 'database', 'user', 'password', 'schema', 'table', 'pool_size', 'ssl'],
+    schema: {
+      uri: {
+        type: 'string',
+        props: {
+          label: 'Connection URI',
+          placeholder: 'postgresql://user:password@host:5432/database (optional, overrides fields below)',
+        },
+      },
+      host: {
+        type: 'string',
+        props: { label: 'Host', placeholder: 'localhost' },
+      },
+      port: {
+        type: 'number',
+        props: { label: 'Port' },
+      },
+      database: {
+        type: 'string',
+        props: { label: 'Database' },
+      },
+      user: {
+        type: 'string',
+        props: { label: 'User' },
+      },
+      password: {
+        type: 'password',
+        props: { label: 'Password' },
+      },
+      schema: {
+        type: 'string',
+        props: { label: 'Schema', placeholder: 'public' },
+      },
+      table: {
+        type: 'string',
+        props: { label: 'Table', placeholder: 'otoroshi_events' },
+      },
+      pool_size: {
+        type: 'number',
+        props: { label: 'Pool size' },
+      },
+      ssl: {
+        type: 'bool',
+        props: { label: 'SSL (REQUIRE mode)' },
+      },
+    },
+  },
 };
 
 class TestMatchAndProjectModal extends Component {
