@@ -492,7 +492,7 @@ object ApiConsumer {
               consumerConfig = (json \ "settings").asOpt(NgJwtVerificationOnlyConfig.format)
             )
         },
-        status = json.select("status").asString.toLowerCase match {
+        status = json.select("status").asOptString.getOrElse("staging").toLowerCase match {
           case "staging"    => ApiConsumerStatus.Staging
           case "published"  => ApiConsumerStatus.Published
           case "deprecated" => ApiConsumerStatus.Deprecated
