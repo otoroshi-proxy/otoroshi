@@ -25,6 +25,11 @@ import scala.util.{Failure, Success, Try}
 object ApiActionContext {
   val forbidden  = Results.Forbidden(Json.obj("error" -> "You're not authorized here !"))
   val fforbidden = forbidden.future
+
+  // the backoffice user token is minted for one admin api call and consumed right away, so it has no
+  // reason to outlive it. the leeway covers clock skew between cluster nodes
+  val backOfficeUserTokenTtlSeconds    = 30L
+  val backOfficeUserTokenLeewaySeconds = 10L
 }
 
 trait ApiActionContextCapable {
@@ -106,10 +111,20 @@ trait ApiActionContextCapable {
                   Right(user.some)
               }
             case Some(userJwt) =>
-              Try(JWT.require(Algorithm.HMAC512(apiKey.clientSecret)).build().verify(userJwt)) match {
-                case Failure(e)       =>
+              Try(
+                JWT
+                  .require(Algorithm.HMAC512(env.otoroshiSecret))
+                  .acceptLeeway(ApiActionContext.backOfficeUserTokenLeewaySeconds)
+                  .build()
+                  .verify(userJwt)
+              ) match {
+                case Failure(e)                                       =>
                   Left("You're not authorized here !")
-                case Success(decoded) => {
+                // an expiry is required, not just honoured when present: a token minted before it was
+                // added would otherwise stay valid forever
+                case Success(decoded) if decoded.getExpiresAt == null =>
+                  Left("You're not authorized here !")
+                case Success(decoded)                                 => {
                   Option(decoded.getClaim("user"))
                     .flatMap(c => Try(c.asString()).toOption)
                     .flatMap(u => Try(Json.parse(u)).toOption)

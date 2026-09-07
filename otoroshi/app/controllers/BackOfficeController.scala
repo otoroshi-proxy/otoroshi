@@ -43,6 +43,7 @@ import play.api.libs.streams.Accumulator
 import play.api.libs.ws.SourceBody
 import play.api.mvc.*
 
+import java.time.Instant
 import java.util.Base64
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -258,7 +259,8 @@ class BackOfficeController(
       "Otoroshi-BackOffice-User"       -> JWT
         .create()
         .withClaim("user", Json.stringify(ctx.user.toJson))
-        .sign(Algorithm.HMAC512(apikey.clientSecret))
+        .withExpiresAt(Instant.now().plusSeconds(ApiActionContext.backOfficeUserTokenTtlSeconds))
+        .sign(Algorithm.HMAC512(env.otoroshiSecret))
     ) ++ ctx.request.headers.get("Content-Type").filter(_ => currentReqHasBody).map { ctype =>
       "Content-Type" -> ctype
     } ++ ctx.request.headers.get("Accept").map { accept =>

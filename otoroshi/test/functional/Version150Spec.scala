@@ -727,7 +727,7 @@ class TeamsSpec(name: String, configurationSpec: => Configuration) extends Otoro
         "Otoroshi-BackOffice-User" -> JWT
           .create()
           .withClaim("user", Json.stringify(user.toJson))
-          .sign(Algorithm.HMAC512("admin-api-apikey-secret"))
+          .sign(Algorithm.HMAC512(otoroshiComponents.env.otoroshiSecret))
       )
       .withAuth("admin-api-apikey-id", "admin-api-apikey-secret", WSAuthScheme.BASIC)
       .withMethod(method)

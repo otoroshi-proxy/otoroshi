@@ -83,6 +83,14 @@ class AdminApiRightsSpec(name: String, configurationSpec: => Configuration) exte
 
   startOtoroshi()
 
+  def backOfficeUserToken(user: BackOfficeUser, expiresInSeconds: Option[Long] = Some(30L)): String = {
+    val builder = JWT.create().withClaim("user", Json.stringify(user.toJson))
+    expiresInSeconds
+      .map(seconds => builder.withExpiresAt(java.time.Instant.now().plusSeconds(seconds)))
+      .getOrElse(builder)
+      .sign(Algorithm.HMAC512(otoroshiComponents.env.otoroshiSecret))
+  }
+
   def call(
       method: String,
       path: String,
@@ -99,10 +107,7 @@ class AdminApiRightsSpec(name: String, configurationSpec: => Configuration) exte
           Json.stringify(user.profile).getBytes(StandardCharsets.UTF_8)
         ),
         "Otoroshi-Tenant"          -> currentTenant.value,
-        "Otoroshi-BackOffice-User" -> JWT
-          .create()
-          .withClaim("user", Json.stringify(user.toJson))
-          .sign(Algorithm.HMAC512("admin-api-apikey-secret"))
+        "Otoroshi-BackOffice-User" -> backOfficeUserToken(user)
       )
       .withAuth("admin-api-apikey-id", "admin-api-apikey-secret", WSAuthScheme.BASIC)
       .withFollowRedirects(false)
@@ -181,10 +186,7 @@ class AdminApiRightsSpec(name: String, configurationSpec: => Configuration) exte
         "Accept"                   -> "application/x-ndjson",
         "Content-Type"             -> "application/x-ndjson",
         "Otoroshi-Tenant"          -> tenant.value,
-        "Otoroshi-BackOffice-User" -> JWT
-          .create()
-          .withClaim("user", Json.stringify(user.toJson))
-          .sign(Algorithm.HMAC512("admin-api-apikey-secret"))
+        "Otoroshi-BackOffice-User" -> backOfficeUserToken(user)
       )
       .withAuth("admin-api-apikey-id", "admin-api-apikey-secret", WSAuthScheme.BASIC)
       .withFollowRedirects(false)
@@ -236,6 +238,8 @@ class AdminApiRightsSpec(name: String, configurationSpec: => Configuration) exte
     withClue(s"create $clientId: ${Json.stringify(body)} ") {
       status mustBe 201
     }
+    // the apikey is about to authenticate through the gateway, which reads it from the proxy state
+    await(1.second)
   }
 
   def createScopedGroup(id: String): Unit = {
@@ -329,6 +333,56 @@ class AdminApiRightsSpec(name: String, configurationSpec: => Configuration) exte
       createScopedApiKey("scoped-apikey")
       apikeyCall("GET", "/api/apikeys/scoped-apikey", "scoped-apikey")._2 mustBe 200
       apikeyCall("GET", "/api/globalconfig", "scoped-apikey")._2 mustBe 403
+    }
+
+    // the Otoroshi-BackOffice-User header used to be signed with the caller's own clientSecret, so the
+    // holder of any apikey could mint whatever rights it wanted
+    "not let an apikey forge a backoffice user with its own client secret" in {
+      createScopedApiKey("forging-apikey")
+      val forged      = JWT
+        .create()
+        .withClaim("user", Json.stringify(adminUser.toJson))
+        .sign(Algorithm.HMAC512("forging-apikey-secret"))
+      val (_, status) = ws
+        .url(s"http://localhost:${port}/api/globalconfig")
+        .withHttpHeaders(
+          "Host"                     -> "otoroshi-api.oto.tools",
+          "Accept"                   -> "application/json",
+          "Otoroshi-Tenant"          -> tenant.value,
+          "Otoroshi-BackOffice-User" -> forged
+        )
+        .withAuth("forging-apikey", "forging-apikey-secret", WSAuthScheme.BASIC)
+        .get()
+        .futureValue
+        .applyOn(response => (response.status, response.status))
+      status mustBe 403
+    }
+
+    def globalConfigWithToken(token: String): Int = ws
+      .url(s"http://localhost:${port}/api/globalconfig")
+      .withHttpHeaders(
+        "Host"                     -> "otoroshi-api.oto.tools",
+        "Accept"                   -> "application/json",
+        "Otoroshi-Tenant"          -> TenantId("default").value,
+        "Otoroshi-BackOffice-User" -> token
+      )
+      .withAuth("admin-api-apikey-id", "admin-api-apikey-secret", WSAuthScheme.BASIC)
+      .get()
+      .futureValue
+      .status
+
+    // a token minted before the expiry was introduced carries none, and would otherwise stay valid
+    // for as long as the signing secret does
+    "not let a backoffice user token without an expiry through" in {
+      globalConfigWithToken(backOfficeUserToken(adminUser, None)) mustBe 403
+    }
+
+    "not let an expired backoffice user token through" in {
+      globalConfigWithToken(backOfficeUserToken(adminUser, Some(-60L))) mustBe 403
+    }
+
+    "still let a fresh backoffice user token through" in {
+      globalConfigWithToken(backOfficeUserToken(adminUser)) mustBe 200
     }
 
     "not let an apikey grant itself super admin rights through its own metadata" in {

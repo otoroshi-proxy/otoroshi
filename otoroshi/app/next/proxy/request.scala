@@ -6,6 +6,7 @@ import org.apache.pekko.util.ByteString
 import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
 import java.nio.charset.StandardCharsets
+import otoroshi.actions.ApiActionContext
 import otoroshi.env.Env
 import otoroshi.models.{ApiKey, BackOfficeUser, HSAlgoSettings, SecComInfoTokenVersion}
 import otoroshi.utils.http.RequestImplicits.EnhancedRequestHeader
@@ -17,6 +18,7 @@ import play.api.mvc.{Cookies, Headers, Request}
 import play.api.mvc.request.{Cell, RemoteConnection, RequestAttrKey, RequestTarget}
 
 import java.net.{InetAddress, URI, URLEncoder}
+import java.time.Instant
 import java.security.cert.X509Certificate
 import java.util.Base64
 import scala.concurrent.duration.DurationInt
@@ -140,7 +142,8 @@ class BackOfficeRequest(
     "Otoroshi-BackOffice-User"       -> JWT
       .create()
       .withClaim("user", Json.stringify(user.toJson))
-      .sign(Algorithm.HMAC512(apikey.clientSecret))
+      .withExpiresAt(Instant.now().plusSeconds(ApiActionContext.backOfficeUserTokenTtlSeconds))
+      .sign(Algorithm.HMAC512(env.otoroshiSecret))
   )
 
   override def connection: RemoteConnection = new BackOfficeRemoteConnection(request)
