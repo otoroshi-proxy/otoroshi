@@ -2177,6 +2177,7 @@ object ApiKeyHelper {
               case ApikeyTuple(_, None, Some(jwt), _, _)                                                            => {
                 val possibleKeyPairId               = apikey.metadata.get("jwt-sign-keypair")
                 val kid                             = Option(jwt.getKeyId)
+                  .filterNot(_ => env.apikeyJwtPinnedKeyPairOnly)
                   .orElse(possibleKeyPairId)
                   .filter(_ => constraints.jwtAuth.keyPairSigned)
                   .filter(id => if (possibleKeyPairId.isDefined) possibleKeyPairId.get == id else true)

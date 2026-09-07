@@ -358,6 +358,11 @@ class Env(
   lazy val bypassUserRightsCheck: Boolean =
     configuration.getOptionalWithFileSupport[Boolean]("otoroshi.bypassUserRightsCheck").getOrElse(false)
 
+  // the kid of an apikey jwt is chosen by whoever signed the token, so it can point at any certificate
+  // of the store. when this is on, only the apikey's own `jwt-sign-keypair` metadata can designate one
+  lazy val apikeyJwtPinnedKeyPairOnly: Boolean =
+    configuration.getOptionalWithFileSupport[Boolean]("otoroshi.options.apikeyJwtPinnedKeyPairOnly").getOrElse(false)
+
   lazy val globalMaintenanceMode: Boolean =
     configuration.getOptionalWithFileSupport[Boolean]("otoroshi.maintenanceMode").getOrElse(false)
 

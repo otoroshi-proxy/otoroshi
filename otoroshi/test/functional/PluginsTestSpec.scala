@@ -41,6 +41,26 @@ trait PluginsTestSpecBase extends OtoroshiSpec with BeforeAndAfterAll {
   }
 }
 
+// apikey jwt kid handling: sbt "testOnly functional.ApikeyJwtKidSpec functional.ApikeyJwtPinnedKidSpec"
+class ApikeyJwtKidSpec extends PluginsTestSpecBase {
+  s"apikey jwt kid" should {
+    "let the token designate the verification key when pinning is off" in {
+      new ApikeyJwtKidTests(this, pinnedKeyPairOnly = false)
+    }
+  }
+}
+
+class ApikeyJwtPinnedKidSpec extends PluginsTestSpecBase {
+  override def configurationSpec: Configuration = Configuration(
+    ConfigFactory.parseString("otoroshi.options.apikeyJwtPinnedKeyPairOnly = true").resolve()
+  )
+  s"apikey jwt kid" should {
+    "ignore the kid of the token when pinning is on" in {
+      new ApikeyJwtKidTests(this, pinnedKeyPairOnly = true)
+    }
+  }
+}
+
 // the otoroshi bearer alone: sbt "testOnly functional.OtoBearerAuthSpec"
 class OtoBearerAuthSpec extends PluginsTestSpecBase {
   s"otoroshi bearer" should {
