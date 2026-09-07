@@ -2,8 +2,8 @@ package otoroshi.security
 
 import otoroshi.env.Env
 
+import java.security.SecureRandom
 import java.util.UUID
-import java.util.concurrent.ThreadLocalRandom
 import java.util.concurrent.atomic.AtomicLong
 import scala.util.Try
 
@@ -22,6 +22,11 @@ object IdGenerator {
   private val EXTENDED_CHARACTERS   =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789*$%)([]!=+-_:/;.><&".toCharArray.map(_.toString)
   private val INIT_STRING           = for (i <- 0 to 15) yield Integer.toHexString(i)
+
+  // apikey secrets and the like are drawn from here, so the generator must not be predictable from
+  // previously observed output. one instance per thread rather than a shared one: SecureRandom locks
+  // internally and uuid is called on every request
+  private val secureRandom: ThreadLocal[SecureRandom] = ThreadLocal.withInitial(() => new SecureRandom())
 
   private val minus         = 1288834974657L
   private val counter       = new AtomicLong(-1L)
@@ -50,20 +55,32 @@ object IdGenerator {
       (((timestamp - minus) << 22L) | (generatorId << 10L) | counter.incrementAndGet()).toString + append
     }
 
+  // the 32 non fixed characters are one nibble each, so a uuid costs a single draw of 16 bytes
+  // instead of one draw per character. the previous `(nextDouble * 15).toInt` also never reached the
+  // last hex digit, leaving log2(15) bits per character instead of 4
   def uuid: String = {
-    val random = ThreadLocalRandom.current()
-    (for {
-      c <- 0 to 36
-    } yield c match {
-      case i if i == 9 || i == 14 || i == 19 || i == 24 => "-"
-      case i if i == 15                                 => "4"
-      case i if c == 20                                 => INIT_STRING((random.nextDouble() * 4.0).toInt | 8)
-      case i                                            => INIT_STRING((random.nextDouble() * 15.0).toInt | 0)
-    }).mkString("")
+    val bytes = new Array[Byte](16)
+    secureRandom.get().nextBytes(bytes)
+    val builder = new java.lang.StringBuilder(37)
+    var nibble  = 0
+    var index   = 0
+    while (index <= 36) {
+      index match {
+        case 9 | 14 | 19 | 24 => builder.append('-')
+        case 15               => builder.append('4')
+        case _                =>
+          val byte  = bytes(nibble / 2) & 0xff
+          val value = if (nibble % 2 == 0) byte >>> 4 else byte & 0x0f
+          nibble += 1
+          builder.append(INIT_STRING(if (index == 20) (value & 0x03) | 8 else value))
+      }
+      index += 1
+    }
+    builder.toString
   }
 
   def token(characters: Array[String], size: Int): String = {
-    val random = ThreadLocalRandom.current()
+    val random = secureRandom.get()
     (for {
       i <- 0 to size - 1
     } yield characters(random.nextInt(characters.size))).mkString("")
@@ -72,7 +89,7 @@ object IdGenerator {
   def token(size: Int): String                                = token(CHARACTERS, size)
   def token: String                                           = token(64)
   def lowerCaseToken(size: Int): String                       = token(LOWER_CASE_CHARACTERS, size)
-  def lowerCaseToken: String                                  = token(64)
+  def lowerCaseToken: String                                  = token(LOWER_CASE_CHARACTERS, 64)
   def extendedToken(size: Int): String                        = token(EXTENDED_CHARACTERS, size)
   def extendedToken: String                                   = token(EXTENDED_CHARACTERS, 64)
   def namedToken(prefix: String, size: Int, env: Env): String = namedToken(prefix, size, env.env)
