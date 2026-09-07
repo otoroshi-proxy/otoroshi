@@ -73,6 +73,7 @@ const sidebars = {
         'topics/otoroshi-protocol',
         'topics/tls',
         'topics/user-rights',
+        'topics/production-checklist',
         'topics/events-and-analytics',
         'topics/user-analytics',
         'topics/monitoring',

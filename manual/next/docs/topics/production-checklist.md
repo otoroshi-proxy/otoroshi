@@ -1,0 +1,209 @@
+---
+title: Production checklist
+sidebar_position: 8
+---
+
+# Production checklist
+
+Otoroshi sits on the edge of your infrastructure and hands you sharp tools: it can trust any TLS
+certificate, believe every header a client sends, or hand full administrative power to a key that
+declares no rights at all. Every one of those behaviours exists for a reason, and every one of them
+is a decision you own.
+
+A few of Otoroshi's defaults favour compatibility over strictness, so that an upgrade never breaks a
+running platform. That is a deliberate trade: it means a freshly installed Otoroshi and an Otoroshi
+upgraded from an older version may not be configured the same way, even though they run the same
+code. This page lists the settings where that matters.
+
+Nothing here is a bug report. It is the list of things nobody else can decide for you.
+
+## The short version
+
+- [ ] `otoroshi.secret` is not the shipped default, and neither are the admin API credentials
+- [ ] Every admin API key carries an explicit `otoroshi-access-rights` metadata
+- [ ] `otoroshi.bypassUserRightsCheck` is off
+- [ ] `otoroshi.ssl.trust.all` is off
+- [ ] `strictBackendServerValidation` is enabled in your global config, not just assumed
+- [ ] `trustXForwarded` matches your topology: on only if a trusted proxy rewrites those headers
+- [ ] No route runs the apikey plugin with both *validate* and *mandatory* turned off
+- [ ] API keys authenticating with keypair-signed JWTs pin their keypair
+- [ ] Your event exporters are treated as secret material
+
+## Identity and administrative access
+
+### Default secrets are a warning, not a failure
+
+Otoroshi logs a warning at startup when `otoroshi.secret` still holds its shipped value
+(`verysecretvaluethatyoumustoverwrite`), or when the admin API key still uses the default
+`admin-api-apikey-id` / `admin-api-apikey-secret`. It logs a warning — it does not refuse to start,
+because refusing to start would break every evaluation setup and every CI pipeline.
+
+`otoroshi.secret` is not only used for session cookies. It signs the token that carries the identity
+of a backoffice user to the admin API. Leaving it at its default means the value protecting your
+administrative identity is published in this documentation and in the source tree.
+
+```sh
+export OTOROSHI_SECRET="$(openssl rand -base64 48)"
+export OTOROSHI_ADMIN_API_CLIENT_ID="$(openssl rand -hex 16)"
+export OTOROSHI_ADMIN_API_CLIENT_SECRET="$(openssl rand -base64 48)"
+```
+
+:::warning Cluster workers skip the warning
+The startup warning is only printed by leaders. A worker with a default secret says nothing at all.
+Check the value, do not rely on reading the logs of one node.
+:::
+
+### An admin API key with no rights metadata is a superadmin
+
+Rights for an API key calling the admin API are read from its `otoroshi-access-rights` metadata. When
+that metadata is **absent**, the key is treated as unrestricted — not as having no rights.
+
+This is backward compatibility: admin API keys predate the tenant and team model, and existing keys
+had to keep working. The consequence is that creating an admin API key and forgetting to describe its
+rights grants it everything, silently.
+
+```json
+{
+  "clientId": "...",
+  "metadata": {
+    "otoroshi-access-rights": "[{\"tenant\":\"my-tenant:rw\",\"teams\":[\"my-team:rw\"]}]"
+  }
+}
+```
+
+Audit your existing keys: any key authorized on the admin API group without that metadata is a
+superadmin, whatever its name suggests.
+
+### `otoroshi.bypassUserRightsCheck` disables RBAC entirely
+
+This flag short-circuits every rights check in the admin API — tenants, teams, superadmin, all of it.
+It exists for local development and for recovering from a configuration that locked you out.
+
+It has no legitimate use in production. Its default is `false`; make sure nothing in your deployment
+turns it on.
+
+### API key secrets are stored and returned in clear text
+
+`clientSecret` is not hashed. It is stored as-is, returned in full by the admin API on read and list,
+and included in the audit events emitted for API key operations — which means it reaches every
+configured event exporter: Elasticsearch, Kafka, webhooks, files.
+
+This is inherent to what an API key is: unlike a password, Otoroshi has to present the secret to
+compare it, and operators legitimately need to read it back to hand it to a consumer. There is no fix
+to apply here, only a consequence to accept:
+
+- Treat your analytics and audit pipeline as a secret store. Anyone who can read your Elasticsearch
+  index can authenticate as any API key created while that exporter was running.
+- Restrict who can read API keys through tenant and team rights, not only who can write them.
+- Prefer [secrets management](./secrets.md) references for the secrets *you* inject into Otoroshi;
+  it does not apply to API key secrets Otoroshi generates.
+
+## TLS
+
+### Backend certificate validation on upgraded installations
+
+Otoroshi can validate the certificate presented by your backends, or accept anything. The switch is
+`strictBackendServerValidation` in the global config's TLS settings.
+
+A **fresh install** defaults to `true`. But when the field is missing from a persisted configuration —
+which is the case for every installation upgraded from a version that predates it — reading that
+configuration yields `false`. Same code, same version, two different postures depending on your
+history.
+
+The permissive trust manager accepts self-signed certificates and hostname mismatches on outgoing
+connections. Worse, Otoroshi installs its SSL context as the JVM default, so the same permissiveness
+extends to anything else running in that JVM, including LDAPS connections made by your authentication
+modules.
+
+Check the effective value rather than assuming it:
+
+```sh
+curl -u "$CLIENT_ID:$CLIENT_SECRET" \
+  https://otoroshi-api.your.domain/api/globalconfig | jq '.tlsSettings.strictBackendServerValidation'
+```
+
+:::note mTLS on incoming connections
+The same trust manager serves client certificate validation. Note that the built-in
+`NgHasClientCertValidator` plugin only checks that a client certificate is *present*. If you need the
+certificate to be issued by a specific authority, or to match a specific API key, use the dedicated
+validators instead.
+:::
+
+### `otoroshi.ssl.trust.all` disables TLS validation completely
+
+When this flag is on, Otoroshi trusts every certificate, everywhere, unconditionally. It is meant for
+local development against self-signed backends.
+
+Treat it as development-only. There is no production scenario where it is the right answer; if you
+need to trust a private authority, add that authority to Otoroshi's certificate store instead.
+
+## Network trust
+
+### `X-Forwarded-*` headers are trusted by default
+
+`trustXForwarded` defaults to `true`, and the client IP address is read from the first value of the
+`X-Forwarded-For` header.
+
+That default assumes Otoroshi runs behind a load balancer that **overwrites** those headers. If a
+client can reach Otoroshi directly, it chooses its own identity, which means it can:
+
+- pick an arbitrary source IP, bypassing per-IP throttling and IP allow/block lists
+- claim `X-Forwarded-Proto: https` and satisfy the "force HTTPS" plugin over plain HTTP
+- set `X-Forwarded-Host` and influence domain-based routing
+
+Two valid configurations, and you must pick the one matching your topology:
+
+- **Behind a trusted proxy that rewrites the headers**: keep `trustXForwarded` on.
+- **Directly exposed, or behind a proxy that merely appends**: turn it off, and Otoroshi will use the
+  real remote address.
+
+There is no way for Otoroshi to tell those two topologies apart on its own. This is the setting on
+this page most likely to be wrong without anyone noticing, because nothing misbehaves until someone
+tries.
+
+## API key plugin configuration
+
+### `validate` and `mandatory` both off swallows every rejection
+
+The apikey plugin has two toggles that look independent but combine into a surprising state. With
+both *validate* and *mandatory* disabled, the plugin still extracts and resolves the API key, but
+every rejection it produces is turned into an allow — including a bad secret, a disabled key, and a
+`429` from an exhausted quota.
+
+That combination means "an API key is optional here, and I do not want it enforced". If what you want
+is "an API key is optional, but a *wrong* one must be rejected", that is a different configuration:
+keep validation on and mandatory off.
+
+Review any route where both are off, especially if you also rely on quotas: quotas are counted but
+never enforced there.
+
+### Pin the keypair of API keys that authenticate with JWTs
+
+An API key can authenticate by presenting a JWT signed either with its `clientSecret` (`HS*`) or with
+a keypair held in Otoroshi's certificate store (`RS*`, `ES*`).
+
+For the keypair case, the certificate is selected by the `kid` header of the token being verified —
+a value chosen by whoever signed it — and the lookup spans the whole certificate store, without
+tenant scoping. If the API key does not declare which keypair it signs with, anyone able to get a
+certificate of their own into that store can designate it and authenticate as that key.
+
+Pin the keypair on the API key itself:
+
+```json
+{
+  "metadata": {
+    "jwt-sign-keypair": "the-certificate-id"
+  }
+}
+```
+
+When the metadata is present, the `kid` of the token must match it — the pin already wins. To enforce
+the pin everywhere and ignore the `kid` header entirely, set:
+
+```sh
+export OTOROSHI_OPTIONS_APIKEYJWTPINNEDKEYPAIRONLY=true
+```
+
+With that option on, an API key that pins no keypair can no longer authenticate with a keypair-signed
+JWT at all. This is the recommended posture; it defaults to off so that existing deployments keep
+working.
