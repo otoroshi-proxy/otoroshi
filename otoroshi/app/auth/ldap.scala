@@ -85,6 +85,24 @@ object LdapAuthModuleConfig extends FromJson[AuthModuleConfig] {
 
   lazy val logger = Logger("otoroshi-ldap-auth-config")
 
+  // RFC 4515 section 3: the login lands inside an assertion value, where these characters would
+  // otherwise change the structure of the filter instead of being matched literally
+  def escapeFilterValue(value: String): String = {
+    val builder = new StringBuilder(value.length)
+    value.foreach {
+      case '\\'     => builder.append("\\5c")
+      case '*'      => builder.append("\\2a")
+      case '('      => builder.append("\\28")
+      case ')'      => builder.append("\\29")
+      case '\u0000' => builder.append("\\00")
+      case char     => builder.append(char)
+    }
+    builder.toString()
+  }
+
+  def searchFilterFor(searchFilter: String, username: String): String =
+    searchFilter.replace("${username}", escapeFilterValue(username))
+
   def fromJsons(value: JsValue): LdapAuthModuleConfig =
     try {
       _fmt.reads(value).get
@@ -438,11 +456,11 @@ case class LdapAuthModuleConfig(
           )
         if (LdapAuthModuleConfig.logger.isDebugEnabled)
           LdapAuthModuleConfig.logger.debug(
-            s"searching user in ${userBase.map(_ + ",").getOrElse("") + searchBase} with filter ${searchFilter.replace("${username}", username)}"
+            s"searching user in ${userBase.map(_ + ",").getOrElse("") + searchBase} with filter ${LdapAuthModuleConfig.searchFilterFor(searchFilter, username)}"
           )
         val res                                     = ctx.search(
           userBase.map(_ + ",").getOrElse("") + searchBase,
-          searchFilter.replace("${username}", username),
+          LdapAuthModuleConfig.searchFilterFor(searchFilter, username),
           getDefaultSearchControls()
         )
         val boundUser: Either[String, LdapAuthUser] = if (res.hasMore) {
