@@ -11,6 +11,7 @@ import com.auth0.jwt.interfaces.DecodedJWT
 import java.nio.charset.StandardCharsets
 import com.google.common.hash.Hashing
 import otoroshi.env.Env
+import otoroshi.utils.crypto.Signatures
 import otoroshi.events.{Alerts, ApiKeyQuotasAlmostExceededAlert, ApiKeyQuotasAlmostExceededReason, ApiKeyQuotasExceededAlert, ApiKeyQuotasExceededReason, ApiKeySecretHasRotated, ApiKeySecretWillRotate, RevokedApiKeyUsageAlert}
 import otoroshi.gateway.Errors
 import org.joda.time.DateTime
@@ -227,7 +228,8 @@ case class ApiKey(
   def isActive(): Boolean                                 = enabled && validUntil.forall(date => date.isAfterNow)
   def isInactive(): Boolean                               = !isActive()
   def isValid(value: String): Boolean                     =
-    enabled && ((value == clientSecret) || (rotation.enabled && rotation.nextSecret.contains(value)))
+    enabled && (Signatures.constantTimeEquals(value, clientSecret) ||
+      (rotation.enabled && rotation.nextSecret.exists(secret => Signatures.constantTimeEquals(value, secret))))
   def isInvalid(value: String): Boolean                   = !isValid(value)
   def authorizedOn(identifier: EntityIdentifier): Boolean = authorizedEntities.contains(identifier)
   def authorizedOnService(id: String): Boolean            = authorizedEntities.contains(ServiceDescriptorIdentifier(id))
@@ -432,7 +434,7 @@ case class ApiKey(
   def checkBearer(value: String): Boolean = {
     val bearer       = toBearer()
     lazy val bearer2 = toNextBearer()
-    value == bearer || value == bearer2
+    Signatures.constantTimeEquals(value, bearer) || Signatures.constantTimeEquals(value, bearer2)
   }
 }
 

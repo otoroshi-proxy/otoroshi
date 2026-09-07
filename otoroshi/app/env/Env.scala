@@ -29,7 +29,7 @@ import otoroshi.next.utils.Vaults
 import otoroshi.openapi.ClassGraphScanner
 import otoroshi.script.plugins.Plugins
 import otoroshi.script.{AccessValidatorRef, JobManager, ScriptCompiler, ScriptManager}
-import otoroshi.security.{ClaimCrypto, IdGenerator}
+import otoroshi.security.IdGenerator
 import otoroshi.ssl.pki.BouncyCastlePki
 import otoroshi.ssl.{Cert, DynamicSSLEngineProvider, OcspResponder}
 import otoroshi.statefulclients.StatefulClientsManager
@@ -834,7 +834,6 @@ class Env(
   lazy val redirections: Seq[String] =
     configuration.getOptionalWithFileSupport[Seq[String]]("app.redirections").map(_.toSeq).getOrElse(Seq.empty[String]).toSeq
 
-  lazy val crypto = ClaimCrypto(sharedKey)
 
   object Headers {
     lazy val OtoroshiVizFromLabel               = configuration.getOptionalWithFileSupport[String]("otoroshi.headers.trace.label").get

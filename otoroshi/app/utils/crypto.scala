@@ -1,6 +1,7 @@
 package otoroshi.utils.crypto
 
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
@@ -24,6 +25,12 @@ object BCryptHelper {
 }
 
 object Signatures {
+
+  // String.equals stops at the first differing byte, which leaks how many leading bytes were right.
+  // MessageDigest.isEqual compares in constant time, length included
+  def constantTimeEquals(a: String, b: String): Boolean = {
+    MessageDigest.isEqual(a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8))
+  }
 
   def hmac(algo: String, what: String, secret: String): Array[Byte] = {
     val sha256_HMAC = Mac.getInstance(algo)
