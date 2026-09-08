@@ -209,7 +209,7 @@ trait CustomDataExporterFilter extends NgPlugin {
   override def visibility: NgPluginVisibility    = NgPluginVisibility.NgUserLand
   override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Other)
   override def steps: Seq[NgStep]                = Seq(NgStep.DataExporterFilter)
-  def matchEvent(evt: JsValue)(using ec: ExecutionContext, env: Env): Future[Boolean]
+  def matchEvent(evt: JsValue, config: JsValue)(using ec: ExecutionContext, env: Env): Future[Boolean]
 }
 
 trait CustomDataExporterTransformer extends NgPlugin {
@@ -217,7 +217,7 @@ trait CustomDataExporterTransformer extends NgPlugin {
   override def visibility: NgPluginVisibility    = NgPluginVisibility.NgUserLand
   override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Other)
   override def steps: Seq[NgStep]                = Seq(NgStep.DataExporterTransform)
-  def project(evt: JsValue)(using ec: ExecutionContext, env: Env): Future[JsValue]
+  def project(evt: JsValue, config: JsValue)(using ec: ExecutionContext, env: Env): Future[JsValue]
 }
 
 object DataExporter {
@@ -474,7 +474,7 @@ object DataExporter {
                 case Left(err) =>
                   logger.error(s"customFilter plugin '${cfg.ref}' not found on exporter '${id}': ${err}")
                   FastFuture.successful(false)
-                case Right(p)  => p.matchEvent(event)
+                case Right(p)  => p.matchEvent(event, cfg.config)
               }
             case other      =>
               logger.error(s"customFilter unknown kind '${other}' on exporter '${id}'")
@@ -562,7 +562,7 @@ object DataExporter {
                 case Left(err) =>
                   logger.error(s"customTransform plugin '${cfg.ref}' not found on exporter '${id}': ${err}")
                   FastFuture.successful(event)
-                case Right(p)  => p.project(event)
+                case Right(p)  => p.project(event, cfg.config)
               }
             case other      =>
               logger.error(s"customTransform unknown kind '${other}' on exporter '${id}'")
@@ -2321,7 +2321,7 @@ object Exporters {
                     withEventLongValue(event, metric.selector) { v =>
                       meter.withTimer(id).record(Math.abs(FiniteDuration(v, TimeUnit.MILLISECONDS).toNanos), attributes)
                     }
-                  case _ => 
+                  case _ =>
                 }
               }
             } catch {
