@@ -192,7 +192,7 @@ In this example:
 - `./shared/route?.json` matches files like `route1.json`, `routeA.json`, etc.
 
 :::note
-Glob patterns are supported by the following sources: **file**, **git**, **github**, **gitlab**, **gitea**, **forgejo**, **codeberg**, **s3**, and **consulkv**. The **http** and **bitbucket** sources do not support glob patterns because they lack a recursive directory listing API. When a glob pattern is used with a source that does not support it, the pattern is treated as a literal path.
+Glob patterns are supported by the following sources: **file**, **git**, **github**, **gitlab**, **gitea**, **forgejo**, **codeberg**, **bitbucketserver**, **s3**, and **consulkv**. The **http** and **bitbucket** (Cloud) sources do not support glob patterns because they lack a recursive directory listing API. When a glob pattern is used with a source that does not support it, the pattern is treated as a literal path.
 :::
 ## Remote Catalog configuration
 
@@ -350,7 +350,7 @@ Fetches entities from a Bitbucket Cloud repository using the Bitbucket API 2.0.
 
 If `username` is provided, authentication uses Basic auth (`username:token`). Otherwise, Bearer token authentication is used.
 
-This source targets Bitbucket **Cloud** only. Bitbucket Server / Data Center exposes a different API (`/rest/api/1.0`), so pointing `base_url` at a Bitbucket Server instance will not work -- use the generic [Git](#git-generic) source for those.
+This source targets Bitbucket **Cloud** only. Bitbucket Server / Data Center exposes a different API (`/rest/api/1.0`), so pointing `base_url` at a Bitbucket Server instance will not work -- use the [Bitbucket Server / Data Center](#bitbucket-server--data-center) source kind for those.
 
 Supports webhook-triggered deployments (see the [Webhook deployment](#webhook-deployment) section).
 
@@ -367,6 +367,52 @@ The `repo_patterns` option filters repositories by their slug using glob pattern
     "repo": "cloud-apim",
     "path": "otoroshi-remote-catalog.yaml",
     "token": "xxx",
+    "repo_patterns": ["otoroshi-*"]
+  }
+}
+```
+
+### Bitbucket Server / Data Center
+
+Fetches entities from a self-hosted Bitbucket Server or Data Center instance, using the REST API 1.0. Bitbucket Server exposes a completely different API from Bitbucket Cloud, which is why it has its own source kind.
+
+```javascript
+{
+  "source_kind": "bitbucketserver",
+  "source_config": {
+    "repo": "PRJ/my-repo",                             // projectKey/repoSlug, or a project key alone to scan it
+    "branch": "main",                                  // branch name (default: main)
+    "path": "entities/",                               // file or directory path
+    "token": "xxx",                                    // HTTP access token
+    "username": "my-user",                             // optional username (switches to Basic auth)
+    "base_url": "https://bitbucket.example.com",       // instance URL (default: http://localhost:7990)
+    "repo_patterns": ["otoroshi-*"]                    // optional: filter repos when scanning a project
+  }
+}
+```
+
+`base_url` is the root URL of the instance: the `/rest/api/1.0` prefix is appended automatically (providing it explicitly also works). The `repo` field accepts a project key and repository slug (`PRJ/my-repo`), or a browse URL such as `https://bitbucket.example.com/projects/PRJ/repos/my-repo/browse`. Personal repositories live in a project whose key is `~username`, so `~jdoe/my-repo` is a valid value.
+
+If `username` is provided, authentication uses Basic auth (`username:token`). Otherwise the token is sent as a Bearer token, which is what Bitbucket Server HTTP access tokens expect.
+
+Unlike the Bitbucket Cloud source, this one supports glob patterns in catalog listing files, because the REST API 1.0 exposes a recursive file listing endpoint. All listing endpoints are paginated by Bitbucket Server (25 items per page by default) and Otoroshi follows every page.
+
+Supports webhook-triggered deployments (see the [Webhook deployment](#webhook-deployment) section). Configure a `repo:refs_changed` webhook on the repository.
+
+#### Project scanning mode
+
+When `repo` is set to a project key alone (without `/`, e.g., `PRJ` instead of `PRJ/my-repo`), Otoroshi will list all repositories of that project and scan each one for the specified `path`. If a repository does not contain the specified path, it is silently skipped.
+
+The `repo_patterns` option filters repositories by their slug using glob patterns.
+
+```javascript
+{
+  "source_kind": "bitbucketserver",
+  "source_config": {
+    "repo": "PRJ",
+    "path": "otoroshi-remote-catalog.yaml",
+    "token": "xxx",
+    "base_url": "https://bitbucket.example.com",
     "repo_patterns": ["otoroshi-*"]
   }
 }

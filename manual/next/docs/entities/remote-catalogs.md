@@ -25,7 +25,7 @@ This is not a one-way import: if an entity is removed from the external source, 
 
 Remote Catalogs support a wide range of external sources:
 
-- **Git hosting platforms**: GitHub, GitLab, Bitbucket, Gitea, Forgejo, Codeberg (using their respective APIs with token-based authentication). Each of them accepts a custom API base URL, so GitHub Enterprise Server, a self-managed GitLab or any hosted Forgejo/Gitea instance is covered by the matching source kind
+- **Git hosting platforms**: GitHub, GitLab, Bitbucket Cloud, Bitbucket Server / Data Center, Gitea, Forgejo, Codeberg (using their respective APIs with token-based authentication). Each of them accepts a custom API base URL, so GitHub Enterprise Server, a self-managed GitLab or any hosted Forgejo/Gitea instance is covered by the matching source kind
 - **Git repositories**: any Git repository cloned directly
 - **Object storage**: S3-compatible buckets (AWS S3, MinIO, etc.)
 - **HTTP endpoints**: any URL returning entity definitions (custom config servers, CI/CD artifact stores, etc.)
@@ -79,7 +79,8 @@ You can find all remote catalogs [here](http://otoroshi.oto.tools:8080/bo/dashbo
 | `file` | Read entities from a local file path |
 | `github` | Sync from a GitHub repository |
 | `gitlab` | Sync from a GitLab repository |
-| `bitbucket` | Sync from a Bitbucket repository |
+| `bitbucket` | Sync from a Bitbucket Cloud repository |
+| `bitbucketserver` | Sync from a Bitbucket Server / Data Center repository |
 | `git` | Sync from any Git repository via clone |
 | `s3` | Fetch entities from an S3-compatible bucket |
 | `consulkv` | Read entities from a Consul KV store |
@@ -97,7 +98,7 @@ The `github`, `gitlab`, `gitea`, `forgejo` and `codeberg` source kinds all accep
 | `gitlab` | self-managed GitLab (CE/EE), GitLab Dedicated |
 | `gitea` / `forgejo` / `codeberg` | any Gitea or Forgejo instance, self-hosted or managed (Codebahn, OpenCommit, Codey, etc.) |
 
-The `bitbucket` source kind is the exception: it targets the Bitbucket **Cloud** API 2.0, and Bitbucket Server / Data Center exposes a different API (`/rest/api/1.0`). Use the generic `git` source kind for those, and more generally for any forge without a supported API.
+The `bitbucket` source kind is the exception: it targets the Bitbucket **Cloud** API 2.0 only. Bitbucket Server / Data Center exposes a different API (`/rest/api/1.0`) and has its own `bitbucketserver` source kind. For any forge without a supported API, use the generic `git` source kind, which clones the repository over HTTPS or SSH.
 
 ### Source configuration
 

@@ -1534,6 +1534,351 @@ class CatalogSourceBitbucket extends CatalogSource {
   }
 }
 
+class CatalogSourceBitbucketServer extends CatalogSource {
+
+  private val logger = Logger("otoroshi-remote-catalog-source-bitbucketserver")
+
+  override def sourceKind: String       = "bitbucketserver"
+  override def supportsWebhook: Boolean = true
+
+  private def parseRepo(repoUrl: String): Option[(String, String)] = {
+    val cleaned    = repoUrl.stripSuffix(".git").stripSuffix("/")
+    val parts      = cleaned.split("/").filter(_.nonEmpty).toSeq
+    val projectIdx = parts.indexOf("projects")
+    val repoIdx    = parts.indexOf("repos")
+    if (projectIdx >= 0 && repoIdx == projectIdx + 2 && parts.length > repoIdx + 1) {
+      Some((parts(projectIdx + 1), parts(repoIdx + 1)))
+    } else if (parts.length >= 2) {
+      Some((parts(parts.length - 2), parts(parts.length - 1)))
+    } else {
+      None
+    }
+  }
+
+  private def parseProject(repoUrl: String): Option[String] = {
+    val cleaned    = repoUrl.stripSuffix(".git").stripSuffix("/")
+    val path       = if (cleaned.contains("://")) {
+      cleaned.split("://", 2).last.split("/").drop(1).mkString("/")
+    } else cleaned
+    val parts      = path.split("/").filter(_.nonEmpty).toSeq
+    val projectIdx = parts.indexOf("projects")
+    if (projectIdx >= 0 && !parts.contains("repos") && parts.length > projectIdx + 1) {
+      Some(parts(projectIdx + 1))
+    } else if (parts.length == 1) {
+      Some(parts(0))
+    } else {
+      None
+    }
+  }
+
+  private def bitbucketHeaders(token: String, username: String): Seq[(String, String)] = {
+    val auth = if (token.nonEmpty) {
+      if (username.nonEmpty) {
+        val encoded = java.util.Base64.getEncoder.encodeToString(s"$username:$token".getBytes(StandardCharsets.UTF_8))
+        Seq("Authorization" -> s"Basic $encoded")
+      } else {
+        Seq("Authorization" -> s"Bearer $token")
+      }
+    } else {
+      Seq.empty
+    }
+    Seq("User-Agent" -> "Otoroshi-Remote-Catalogs") ++ auth
+  }
+
+  // Bitbucket Server pages every collection with start/limit/isLastPage/nextPageStart and defaults to 25 items,
+  // so every listing endpoint must be followed to the last page.
+  private def fetchPaged(
+      url: String,
+      params: Seq[(String, String)],
+      pageOf: JsValue => JsObject,
+      extract: JsObject => Seq[String],
+      token: String,
+      username: String,
+      env: Env,
+      context: String
+  )(using ec: ExecutionContext): Future[Either[JsValue, Seq[String]]] = {
+    def go(start: Int, acc: Seq[String]): Future[Either[JsValue, Seq[String]]] = {
+      env.Ws
+        .url(url)
+        .withQueryStringParameters((params ++ Seq("limit" -> "1000", "start" -> start.toString))*)
+        .withHttpHeaders(bitbucketHeaders(token, username)*)
+        .withRequestTimeout(Duration(60000L, TimeUnit.MILLISECONDS))
+        .get()
+        .flatMap { resp =>
+          if (resp.status == 200) {
+            val page       = pageOf(resp.json)
+            val items      = acc ++ extract(page)
+            val isLastPage = page.select("isLastPage").asOpt[Boolean].getOrElse(true)
+            val nextStart  = page.select("nextPageStart").asOpt[Int]
+            (isLastPage, nextStart) match {
+              case (false, Some(next)) if next > start => go(next, items)
+              case _                                   => (Right(items): Either[JsValue, Seq[String]]).vfuture
+            }
+          } else {
+            (Left(
+              Json.obj("error" -> s"Bitbucket Server API returned ${resp.status} for $context")
+            ): Either[JsValue, Seq[String]]).vfuture
+          }
+        }
+        .recover { case e: Throwable =>
+          Left(Json.obj("error" -> s"Error fetching $context from Bitbucket Server: ${e.getMessage}")): Either[
+            JsValue,
+            Seq[String]
+          ]
+        }
+    }
+    go(0, Seq.empty)
+  }
+
+  private def fetchFileContent(
+      apiBase: String,
+      project: String,
+      repo: String,
+      filePath: String,
+      branch: String,
+      token: String,
+      username: String,
+      env: Env
+  )(using ec: ExecutionContext): Future[Either[JsValue, String]] = {
+    val apiUrl = s"$apiBase/projects/$project/repos/$repo/raw/$filePath"
+    env.Ws
+      .url(apiUrl)
+      .withQueryStringParameters("at" -> s"refs/heads/$branch")
+      .withHttpHeaders(bitbucketHeaders(token, username)*)
+      .withRequestTimeout(Duration(30000L, TimeUnit.MILLISECONDS))
+      .get()
+      .map { resp =>
+        if (resp.status == 200) {
+          Right(resp.body[String]): Either[JsValue, String]
+        } else {
+          Left(Json.obj("error" -> s"Bitbucket Server API returned ${resp.status} for $filePath")): Either[
+            JsValue,
+            String
+          ]
+        }
+      }
+      .recover { case e: Throwable =>
+        Left(Json.obj("error" -> s"Error fetching $filePath from Bitbucket Server: ${e.getMessage}")): Either[
+          JsValue,
+          String
+        ]
+      }
+  }
+
+  private def listDirectory(
+      apiBase: String,
+      project: String,
+      repo: String,
+      dirPath: String,
+      branch: String,
+      token: String,
+      username: String,
+      env: Env
+  )(using ec: ExecutionContext): Future[Either[JsValue, Seq[String]]] = {
+    val path = if (dirPath.isEmpty || dirPath == "/") "" else dirPath.stripSuffix("/")
+    val url  =
+      if (path.isEmpty) s"$apiBase/projects/$project/repos/$repo/browse"
+      else s"$apiBase/projects/$project/repos/$repo/browse/$path"
+    fetchPaged(
+      url,
+      Seq("at" -> s"refs/heads/$branch"),
+      json => json.select("children").asOpt[JsObject].getOrElse(Json.obj()),
+      page =>
+        page.select("values").asOpt[Seq[JsObject]].getOrElse(Seq.empty).toSeq.flatMap { item =>
+          val itemType = item.select("type").asOpt[String].getOrElse("")
+          val itemName = item.select("path").select("toString").asOpt[String].getOrElse("")
+          if (itemType == "FILE" && SourceUtils.isEntityFile(itemName)) {
+            if (path.isEmpty) Some(itemName) else Some(s"$path/$itemName")
+          } else None
+        },
+      token,
+      username,
+      env,
+      s"directory listing of '$path'"
+    )
+  }
+
+  // /files lists every file of the repository recursively, which the Bitbucket Cloud API does not offer.
+  private def listAllFilesRecursive(
+      apiBase: String,
+      project: String,
+      repo: String,
+      branch: String,
+      token: String,
+      username: String,
+      env: Env
+  )(using ec: ExecutionContext): Future[Either[JsValue, Seq[String]]] = {
+    fetchPaged(
+      s"$apiBase/projects/$project/repos/$repo/files",
+      Seq("at" -> s"refs/heads/$branch"),
+      json => json.asOpt[JsObject].getOrElse(Json.obj()),
+      page => page.select("values").asOpt[Seq[String]].getOrElse(Seq.empty).toSeq,
+      token,
+      username,
+      env,
+      "recursive file listing"
+    )
+  }
+
+  private def listProjectRepos(
+      apiBase: String,
+      project: String,
+      token: String,
+      username: String,
+      env: Env
+  )(using ec: ExecutionContext): Future[Either[JsValue, Seq[String]]] = {
+    fetchPaged(
+      s"$apiBase/projects/$project/repos",
+      Seq.empty,
+      json => json.asOpt[JsObject].getOrElse(Json.obj()),
+      page =>
+        page.select("values").asOpt[Seq[JsObject]].getOrElse(Seq.empty).toSeq.flatMap(_.select("slug").asOpt[String]),
+      token,
+      username,
+      env,
+      s"repos of project '$project'"
+    )
+  }
+
+  override def webhookDeploySelect(possibleCatalogs: Seq[RemoteCatalog], payload: JsValue)(using
+      ec: ExecutionContext,
+      env: Env
+  ): Future[Either[JsValue, Seq[RemoteCatalog]]] = {
+    val projectKey = payload.select("repository").select("project").select("key").asOpt[String].getOrElse("")
+    val slug       = payload.select("repository").select("slug").asOpt[String].getOrElse("")
+    val branches   = payload
+      .select("changes")
+      .asOpt[Seq[JsObject]]
+      .getOrElse(Seq.empty)
+      .toSeq
+      .flatMap(c => c.select("ref").select("displayId").asOpt[String])
+      .toSet
+    val matched    = possibleCatalogs.filter { catalog =>
+      catalog.sourceKind == "bitbucketserver" && {
+        val configRepo   = catalog.sourceConfig.select("repo").asOpt[String].getOrElse("")
+        val configBranch = catalog.sourceConfig.select("branch").asOpt[String].getOrElse("main")
+        parseRepo(configRepo).exists { case (project, repo) =>
+          // project keys are case insensitive on Bitbucket Server
+          project.equalsIgnoreCase(projectKey) && repo == slug && branches.contains(configBranch)
+        }
+      }
+    }
+    matched.rightf
+  }
+
+  override def webhookDeployExtractArgs(catalog: RemoteCatalog, payload: JsValue)(using
+      ec: ExecutionContext,
+      env: Env
+  ): Future[Either[JsValue, JsObject]] = Json.obj().rightf
+
+  private def fetchFromSingleRepo(
+      apiBase: String,
+      project: String,
+      repo: String,
+      branch: String,
+      path: String,
+      token: String,
+      username: String,
+      allRes: Seq[Resource],
+      env: Env
+  )(using ec: ExecutionContext): Future[Either[JsValue, Seq[RemoteEntity]]] = {
+    if (SourceUtils.hasFileExtension(path)) {
+      fetchFileContent(apiBase, project, repo, path, branch, token, username, env).flatMap {
+        case Left(err)         => err.leftf
+        case Right(rawContent) =>
+          SourceUtils.isDeployListing(rawContent) match {
+            case Some(arr) =>
+              val basePath = if (path.contains("/")) path.substring(0, path.lastIndexOf('/')) else ""
+              SourceUtils.resolveDeployListing(
+                arr,
+                relativePath => {
+                  val fullPath = if (basePath.nonEmpty) s"$basePath/$relativePath" else relativePath
+                  fetchFileContent(apiBase, project, repo, fullPath, branch, token, username, env)
+                },
+                s"bitbucketserver://$project/$repo/$path@$branch",
+                allRes,
+                resolveGlob = Some(glob =>
+                  listAllFilesRecursive(apiBase, project, repo, branch, token, username, env).map {
+                    case Left(err)    => Left(err)
+                    case Right(files) => Right(SourceUtils.resolveRemoteGlob(files, basePath, glob))
+                  }
+                )
+              )
+            case None      =>
+              (Right(
+                SourceUtils.parseEntityContent(rawContent, s"bitbucketserver://$project/$repo/$path@$branch", allRes)
+              ): Either[JsValue, Seq[RemoteEntity]]).vfuture
+          }
+      }
+    } else {
+      listDirectory(apiBase, project, repo, path, branch, token, username, env).flatMap {
+        case Left(err)    => err.leftf
+        case Right(files) =>
+          files
+            .mapAsync { filePath =>
+              fetchFileContent(apiBase, project, repo, filePath, branch, token, username, env).map {
+                case Left(err)         =>
+                  logger.warn(s"Error fetching $filePath: ${err.toString}")
+                  Seq.empty[RemoteEntity]
+                case Right(rawContent) =>
+                  SourceUtils.parseEntityContent(
+                    rawContent,
+                    s"bitbucketserver://$project/$repo/$filePath@$branch",
+                    allRes
+                  )
+              }
+            }
+            .map(entities => Right(entities.flatten): Either[JsValue, Seq[RemoteEntity]])
+      }
+    }
+  }
+
+  override def fetch(catalog: RemoteCatalog, args: JsObject)(using
+      ec: ExecutionContext,
+      env: Env
+  ): Future[Either[JsValue, Seq[RemoteEntity]]] = {
+    val repoUrl      = catalog.sourceConfig.select("repo").asOpt[String].getOrElse("")
+    val branch       = catalog.sourceConfig.select("branch").asOpt[String].getOrElse("main")
+    val path         = catalog.sourceConfig.select("path").asOpt[String].getOrElse("/").stripPrefix("/")
+    val token        = catalog.sourceConfig.select("token").asOpt[String].getOrElse("")
+    val username     = catalog.sourceConfig.select("username").asOpt[String].getOrElse("")
+    val rootUrl      =
+      catalog.sourceConfig.select("base_url").asOpt[String].getOrElse("http://localhost:7990").stripSuffix("/")
+    val apiBase      = if (rootUrl.endsWith("/rest/api/1.0")) rootUrl else s"$rootUrl/rest/api/1.0"
+    val repoPatterns =
+      catalog.sourceConfig.select("repo_patterns").asOpt[Seq[String]].getOrElse(Seq.empty).toSeq
+    val allRes       = env.allResources.resources ++ env.adminExtensions.resources()
+
+    parseProject(repoUrl) match {
+      case Some(project) =>
+        listProjectRepos(apiBase, project, token, username, env).flatMap {
+          case Left(err)    => err.leftf
+          case Right(repos) =>
+            val filtered =
+              if (repoPatterns.nonEmpty)
+                repos.filter(name => repoPatterns.exists(p => SourceUtils.matchesGlob(name, p)))
+              else repos
+            logger.info(s"Scanning ${filtered.size} repos in project '$project' for path '$path'")
+            filtered
+              .mapAsync { repoName =>
+                fetchFromSingleRepo(apiBase, project, repoName, branch, path, token, username, allRes, env).map {
+                  case Left(_)         => Seq.empty[RemoteEntity]
+                  case Right(entities) => entities
+                }
+              }
+              .map(all => Right(all.flatten): Either[JsValue, Seq[RemoteEntity]])
+        }
+      case None          =>
+        parseRepo(repoUrl) match {
+          case Some((project, repo)) =>
+            fetchFromSingleRepo(apiBase, project, repo, branch, path, token, username, allRes, env)
+          case None                  =>
+            Json.obj("error" -> s"Cannot parse Bitbucket Server repo or project from: $repoUrl").leftf
+        }
+    }
+  }
+}
+
 class CatalogSourceGiteaCompat(
     override val sourceKind: String,
     defaultBaseUrl: String

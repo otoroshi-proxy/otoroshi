@@ -308,7 +308,8 @@ export function setupRemoteCatalogsExtension(registerExtension) {
                 { label: 'GitLab', value: 'gitlab' },
                 { label: 'S3', value: 's3' },
                 { label: 'Git', value: 'git' },
-                { label: 'Bitbucket', value: 'bitbucket' },
+                { label: 'Bitbucket Cloud', value: 'bitbucket' },
+                { label: 'Bitbucket Server / Data Center', value: 'bitbucketserver' },
                 { label: 'Consul KV', value: 'consulkv' },
                 { label: 'Gitea', value: 'gitea' },
                 { label: 'Forgejo', value: 'forgejo' },
@@ -635,12 +636,24 @@ export function setupRemoteCatalogsExtension(registerExtension) {
             ? 'source_config.base_url'
             : null,
 
-          state.source_kind === 'bitbucket' ? 'source_config.repo' : null,
-          state.source_kind === 'bitbucket' ? 'source_config.branch' : null,
-          state.source_kind === 'bitbucket' ? 'source_config.path' : null,
-          state.source_kind === 'bitbucket' ? 'source_config.token' : null,
-          state.source_kind === 'bitbucket' ? 'source_config.username' : null,
-          state.source_kind === 'bitbucket' ? 'source_config.base_url' : null,
+          ['bitbucket', 'bitbucketserver'].includes(state.source_kind)
+            ? 'source_config.repo'
+            : null,
+          ['bitbucket', 'bitbucketserver'].includes(state.source_kind)
+            ? 'source_config.branch'
+            : null,
+          ['bitbucket', 'bitbucketserver'].includes(state.source_kind)
+            ? 'source_config.path'
+            : null,
+          ['bitbucket', 'bitbucketserver'].includes(state.source_kind)
+            ? 'source_config.token'
+            : null,
+          ['bitbucket', 'bitbucketserver'].includes(state.source_kind)
+            ? 'source_config.username'
+            : null,
+          ['bitbucket', 'bitbucketserver'].includes(state.source_kind)
+            ? 'source_config.base_url'
+            : null,
 
           state.source_kind === 'git' ? 'source_config.repo' : null,
           state.source_kind === 'git' ? 'source_config.branch' : null,

@@ -216,7 +216,8 @@ object RemoteCatalogDeployWebhookConfig {
           "options" -> Json.arr(
             Json.obj("label" -> "GitHub", "value"    -> "github"),
             Json.obj("label" -> "GitLab", "value"    -> "gitlab"),
-            Json.obj("label" -> "Bitbucket", "value" -> "bitbucket"),
+            Json.obj("label" -> "Bitbucket Cloud", "value" -> "bitbucket"),
+            Json.obj("label" -> "Bitbucket Server / Data Center", "value" -> "bitbucketserver"),
             Json.obj("label" -> "Gitea", "value"     -> "gitea"),
             Json.obj("label" -> "Forgejo", "value"   -> "forgejo"),
             Json.obj("label" -> "Codeberg", "value"  -> "codeberg")
