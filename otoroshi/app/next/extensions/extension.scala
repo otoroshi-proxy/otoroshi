@@ -183,6 +183,10 @@ trait AdminExtension {
   def vaults(): Seq[AdminExtensionVault]                                          = Seq.empty
   def publicKeys(): Future[Seq[PublicKeyJwk]]                                     = Seq.empty.vfuture
   def analyticsQueries(): Seq[otoroshi.next.analytics.queries.AnalyticsQuery]     = Seq.empty
+  // how this extension's own events become rows in the user-analytics database. without one, an
+  // extension can emit all the events it likes and none of them are ever stored, which is why
+  // `analyticsQueries` above had nothing of anyone's to query
+  def analyticsProjections(): Seq[otoroshi.next.analytics.exporter.AnalyticsProjection] = Seq.empty
   def configuration: Configuration                                                = env.configuration
     .getOptional[Configuration](s"otoroshi.admin-extensions.configurations.${id.cleanup}")
     .getOrElse(Configuration.empty)
@@ -291,6 +295,9 @@ class AdminExtensions(env: Env, _extensions: Seq[AdminExtension]) {
   private val _analyticsQueries: Seq[otoroshi.next.analytics.queries.AnalyticsQuery]    =
     extensions.flatMap(_.analyticsQueries())
   def analyticsQueries(): Seq[otoroshi.next.analytics.queries.AnalyticsQuery]           = _analyticsQueries
+  private val _analyticsProjections: Seq[otoroshi.next.analytics.exporter.AnalyticsProjection] =
+    extensions.flatMap(_.analyticsProjections())
+  def analyticsProjections(): Seq[otoroshi.next.analytics.exporter.AnalyticsProjection] = _analyticsProjections
   //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   private val extCache = new UnboundedTrieMap[Class[?], Any]

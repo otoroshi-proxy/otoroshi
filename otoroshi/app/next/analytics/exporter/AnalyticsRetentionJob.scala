@@ -46,13 +46,23 @@ class AnalyticsRetentionJob extends Job {
         FastFuture.successful(())
       case Some(config) =>
         config.config match {
-          case s: UserAnalyticsExporterSettings if s.retentionDays > 0 => deleteOld(s)
+          case s: UserAnalyticsExporterSettings if s.retentionDays > 0 => deleteOld(s, projections)
           case _                                                       => FastFuture.successful(())
         }
     }
   }
 
-  private def deleteOld(s: UserAnalyticsExporterSettings)(using ec: ExecutionContext): Future[Unit] = {
+  /** Core first, then whatever the extensions declared — a table nobody prunes grows forever. */
+  private def projections(using env: Env): Seq[AnalyticsProjection] = AnalyticsProjection
+    .resolve(
+      try env.adminExtensions.analyticsProjections()
+      catch { case _: Throwable => Seq.empty[AnalyticsProjection] }
+    )
+    .filter(_.retention)
+
+  private def deleteOld(s: UserAnalyticsExporterSettings, projections: Seq[AnalyticsProjection])(using
+      ec: ExecutionContext
+  ): Future[Unit] = {
     val opts = s.uri match {
       case Some(uri) => PgConnectOptions.fromUri(uri)
       case None      =>
@@ -65,19 +75,26 @@ class AnalyticsRetentionJob extends Job {
           .applyOnIf(s.ssl)(_.setSslMode(SslMode.REQUIRE))
     }
     val pool = PgBuilder.pool().connectingTo(opts).`with`(new PoolOptions().setMaxSize(1)).build()
-    val sql  =
-      s"DELETE FROM ${AnalyticsSchema.fullTable(s)} WHERE ts < NOW() - INTERVAL '${s.retentionDays} days'"
-    pool
-      .query(sql)
-      .executeAsync()
-      .map { rs =>
-        logger.info(
-          s"[user-analytics-retention] deleted ${rs
-            .rowCount()} events older than ${s.retentionDays} days from ${AnalyticsSchema.fullTable(s)}"
-        )
-      }
-      .recover { case e: Throwable =>
-        logger.error(s"[user-analytics-retention] error while cleaning up ${AnalyticsSchema.fullTable(s)}", e)
+    projections
+      .foldLeft(FastFuture.successful(())) { (acc, projection) =>
+        val table = projection.table(s)
+        val sql   =
+          s"DELETE FROM $table WHERE ${projection.retentionColumn} < NOW() - INTERVAL '${s.retentionDays} days'"
+        acc.flatMap { _ =>
+          pool
+            .query(sql)
+            .executeAsync()
+            .map { rs =>
+              logger.info(
+                s"[user-analytics-retention] deleted ${rs
+                  .rowCount()} rows older than ${s.retentionDays} days from $table"
+              )
+            }
+            // one projection's table missing or misdeclared must not stop the others being pruned
+            .recover { case e: Throwable =>
+              logger.error(s"[user-analytics-retention] error while cleaning up $table", e)
+            }
+        }
       }
       .map(_ => pool.close())
   }

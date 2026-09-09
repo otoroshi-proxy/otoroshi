@@ -239,19 +239,48 @@ object AnalyticsSchema {
     Seq(
       s"CREATE INDEX IF NOT EXISTS idx_${prefix}_alert_ts  ON $t (alert_id, ts DESC);",
       s"CREATE INDEX IF NOT EXISTS idx_${prefix}_tenant_ts ON $t (tenant, ts DESC);",
-      s"CREATE INDEX IF NOT EXISTS idx_${prefix}_unseen    ON $t (alert_id, ts DESC) WHERE seen_at IS NULL;"
+      s"CREATE INDEX IF NOT EXISTS idx_${prefix}_unseen    ON $t (alert_id, ts DESC) WHERE seen_at IS NULL;",
+      // the retention purge filters on `ts` alone, which neither composite above can serve. it
+      // matters most on the first run after this table starts being pruned, when it may hold
+      // everything ever written to it
+      s"CREATE INDEX IF NOT EXISTS idx_${prefix}_ts        ON $t (ts DESC);"
     )
   }
 
-  def migrate(pool: Pool, settings: UserAnalyticsExporterSettings)(using ec: ExecutionContext): Future[Unit] = {
-    val createSchema      = pool.query(s"CREATE SCHEMA IF NOT EXISTS ${settings.schema};").executeAsync()
-    val createTable       = createSchema.flatMap(_ => pool.query(createTableSql(settings)).executeAsync())
-    val withEventsIndexes = indexStatements(settings).foldLeft(createTable.map(_ => ())) { (acc, ddl) =>
-      acc.flatMap(_ => pool.query(ddl).executeAsync().map(_ => ()))
+  private val migrationLogger = Logger("otoroshi-user-analytics-schema")
+
+  /**
+   * Creates the schema, then every projection's table and indexes.
+   *
+   * The core projections run first and unguarded — if the gateway events table cannot be created,
+   * analytics are broken and that has to surface. An extension's DDL is guarded individually: a
+   * plugin with a bad `CREATE TABLE` should lose its own analytics, not the platform's.
+   */
+  def migrate(
+      pool: Pool,
+      settings: UserAnalyticsExporterSettings,
+      projections: Seq[AnalyticsProjection] = AnalyticsProjection.core
+  )(using ec: ExecutionContext): Future[Unit] = {
+    val (core, extras) = projections.partition(p => AnalyticsProjection.core.exists(_.id == p.id))
+    val createSchema   = pool.query(s"CREATE SCHEMA IF NOT EXISTS ${settings.schema};").executeAsync().map(_ => ())
+    val withCore       = core.foldLeft(createSchema) { (acc, projection) =>
+      acc.flatMap(_ => runDdl(pool, settings, projection))
     }
-    val withAlertsTable   =
-      withEventsIndexes.flatMap(_ => pool.query(createFiredAlertsTableSql(settings)).executeAsync().map(_ => ()))
-    firedAlertsIndexStatements(settings).foldLeft(withAlertsTable) { (acc, ddl) =>
+    extras.foldLeft(withCore) { (acc, projection) =>
+      acc.flatMap { _ =>
+        runDdl(pool, settings, projection).recover { case e: Throwable =>
+          migrationLogger.error(s"[user-analytics] could not create the table for projection '${projection.id}'", e)
+          ()
+        }
+      }
+    }
+  }
+
+  private def runDdl(pool: Pool, settings: UserAnalyticsExporterSettings, projection: AnalyticsProjection)(using
+      ec: ExecutionContext
+  ): Future[Unit] = {
+    val created = pool.query(projection.createTableSql(settings)).executeAsync().map(_ => ())
+    projection.indexStatements(settings).foldLeft(created) { (acc, ddl) =>
       acc.flatMap(_ => pool.query(ddl).executeAsync().map(_ => ()))
     }
   }
@@ -491,13 +520,16 @@ class UserAnalyticsExporter(config: DataExporterConfig)(using ec: ExecutionConte
     }
   }
 
-  override def accept(event: JsValue): Boolean = {
-    if (!super.accept(event)) return false
-    val typ = event.select("@type").asOptString
-    typ.contains("GatewayEvent") ||
-    (typ.contains("AlertEvent") &&
-    event.select("alertSubcategory").asOptString.contains("user-analytics"))
-  }
+  /**
+   * Core projections first, so an extension can never take over a family the platform already owns.
+   */
+  private def projections: Seq[AnalyticsProjection] = AnalyticsProjection.resolve(
+    try env.adminExtensions.analyticsProjections()
+    catch { case _: Throwable => Seq.empty[AnalyticsProjection] }
+  )
+
+  override def accept(event: JsValue): Boolean =
+    super.accept(event) && projections.exists(_.accepts(event))
 
   override def start(): Future[Unit] = {
     exporter[UserAnalyticsExporterSettings] match {
@@ -508,7 +540,7 @@ class UserAnalyticsExporter(config: DataExporterConfig)(using ec: ExecutionConte
         UserAnalyticsExporterRegistry.register(config.id, this)
         if (env.clusterConfig.mode.isOff || env.clusterConfig.mode.isLeader) {
           AnalyticsSchema
-            .migrate(newPool, s)
+            .migrate(newPool, s, projections)
             .flatMap { _ =>
               val isActive =
                 config.metadata.get(UserAnalyticsExporterSettings.ActiveMetadataKey).contains("true")
@@ -543,15 +575,19 @@ class UserAnalyticsExporter(config: DataExporterConfig)(using ec: ExecutionConte
         exporter[UserAnalyticsExporterSettings] match {
           case None    => FastFuture.successful(ExportResult.ExportResultFailure("bad config type"))
           case Some(s) =>
-            // Partition by event type and route to the appropriate table.
-            val (gatewayEvents, alertEvents) = events.partition { e =>
-              e.select("@type").asOptString.contains("GatewayEvent")
+            // route each event to the projection that claims it. an event nobody claims cannot
+            // normally get here — `accept` filtered on the same list — but writing it with someone
+            // else's denormaliser would corrupt their table, so it is dropped and said out loud
+            val known        = projections
+            val byProjection = events.groupBy(e => AnalyticsProjection.routeOf(known, e))
+            byProjection.get(None).foreach { orphans =>
+              logger.warn(s"[user-analytics-exporter] ${orphans.size} event(s) matched no projection, dropped")
             }
-            val gatewayFu                    =
-              if (gatewayEvents.isEmpty) FastFuture.successful(()) else sendGatewayEvents(pool, s, gatewayEvents)
-            val alertsFu                     = if (alertEvents.isEmpty) FastFuture.successful(()) else sendAlertEvents(pool, s, alertEvents)
-            gatewayFu
-              .flatMap(_ => alertsFu)
+            val writes = byProjection.collect { case (Some(projection), evs) if evs.nonEmpty =>
+              insert(pool, s, projection, evs)
+            }.toSeq
+            Future
+              .sequence(writes)
               .map(_ => ExportResult.ExportResultSuccess: ExportResult)
               .recover { case e: Throwable =>
                 logger.error(s"[user-analytics-exporter] send failed", e)
@@ -566,41 +602,29 @@ class UserAnalyticsExporter(config: DataExporterConfig)(using ec: ExecutionConte
     case Success(s) => s
   }
 
-  private def sendGatewayEvents(
+  /**
+   * The single insert path.
+   *
+   * `strip` is applied here rather than left to the projection's `toTuple`, so pruning happens for
+   * every projection whether or not its author remembered to ask for it. A batch that fails is
+   * logged and swallowed, as both hardcoded paths did before: one bad table must not stop the
+   * others being written.
+   */
+  private def insert(
       pool: Pool,
       s: UserAnalyticsExporterSettings,
+      projection: AnalyticsProjection,
       events: Seq[JsValue]
   ): Future[Unit] = {
-    val rows: java.util.List[VertxTuple] = events.map { event =>
-      val stripped = EventStripper.stripGatewayEvent(event)
-      val r        = EventDenormalizer.extractColumns(stripped)
-      EventDenormalizer.toTuple(r)
-    }.asJava
+    val rows: java.util.List[VertxTuple] = events.map(e => projection.toTuple(projection.strip(e))).asJava
     pool
-      .preparedQuery(EventDenormalizer.insertSql(s))
-      .executeBatch(rows)
-      .scala
-      .map(_ => ())
-      .recover { case e: Throwable =>
-        logger.error(s"[user-analytics-exporter] error inserting gateway events into ${s.schema}.${s.table}", e)
-        ()
-      }
-  }
-
-  private def sendAlertEvents(
-      pool: Pool,
-      s: UserAnalyticsExporterSettings,
-      events: Seq[JsValue]
-  ): Future[Unit] = {
-    val rows: java.util.List[VertxTuple] = events.map(FiredAlertDenormalizer.toTuple).asJava
-    pool
-      .preparedQuery(FiredAlertDenormalizer.insertSql(s))
+      .preparedQuery(projection.insertSql(s))
       .executeBatch(rows)
       .scala
       .map(_ => ())
       .recover { case e: Throwable =>
         logger.error(
-          s"[user-analytics-exporter] error inserting fired alerts into ${AnalyticsSchema.firedAlertsTable(s)}",
+          s"[user-analytics-exporter] error inserting ${events.size} event(s) into ${projection.table(s)} for projection '${projection.id}'",
           e
         )
         ()
