@@ -342,13 +342,15 @@ Fetches entities from a Bitbucket Cloud repository using the Bitbucket API 2.0.
     "path": "entities/",                               // file or directory path
     "token": "xxx",                                    // app password or OAuth token
     "username": "my-user",                             // username (for Basic auth with app password)
-    "base_url": "https://api.bitbucket.org",           // API base URL (for Bitbucket Server)
+    "base_url": "https://api.bitbucket.org",           // API base URL (Bitbucket Cloud API 2.0 only)
     "repo_patterns": ["otoroshi-*"]                    // optional: filter repos when scanning a workspace
   }
 }
 ```
 
 If `username` is provided, authentication uses Basic auth (`username:token`). Otherwise, Bearer token authentication is used.
+
+This source targets Bitbucket **Cloud** only. Bitbucket Server / Data Center exposes a different API (`/rest/api/1.0`), so pointing `base_url` at a Bitbucket Server instance will not work -- use the generic [Git](#git-generic) source for those.
 
 Supports webhook-triggered deployments (see the [Webhook deployment](#webhook-deployment) section).
 
@@ -428,6 +430,8 @@ Fetches entities from a Forgejo instance. Forgejo is a fork of Gitea and uses th
 ```
 
 Supports the same features as Gitea: webhook-triggered deployments, organization scanning, glob patterns in catalog listing files.
+
+Any hosted service running Forgejo or Gitea works with this source kind: just point `base_url` at the instance. That covers private instances as well as the managed Forgejo offerings (Codebahn, OpenCommit, Codey, etc.), without needing a dedicated source kind for each one.
 
 ### Codeberg
 

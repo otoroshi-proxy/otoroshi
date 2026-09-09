@@ -299,6 +299,7 @@ export function setupRemoteCatalogsExtension(registerExtension) {
           type: 'select',
           props: {
             label: 'Source kind',
+            help: 'Every Forgejo/Gitea-compatible service (Codeberg, Codebahn, OpenCommit, Codey, or any self-hosted instance) uses the Forgejo kind with a custom API base URL. GitHub Enterprise Server and other GitHub-API-compatible forges use the GitHub kind the same way.',
             possibleValues: _.sortBy(
               [
                 { label: 'HTTP', value: 'http' },
@@ -365,6 +366,7 @@ export function setupRemoteCatalogsExtension(registerExtension) {
           props: {
             label: 'API base URL',
             placeholder: 'https://api.github.com or https://gitlab.com',
+            help: 'Point this at any instance speaking the same API: GitHub Enterprise Server, a self-managed GitLab, or a hosted Forgejo such as https://codeberg.org or https://codebahn.net. Defaults to the public API of the selected source kind.',
           },
         },
         // Git source fields
