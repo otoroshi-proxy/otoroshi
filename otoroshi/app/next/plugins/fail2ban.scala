@@ -75,7 +75,7 @@ case class Fail2BanConfig(
         otoroshi.utils.RegexPool(ip.substring(3).init).matches(remoteAddress)
       }
       case cidr if cidr.startsWith("Cidr(") && cidr.endsWith(")") => {
-        IpFiltering.cidr(cidr).contains(remoteAddress)
+        IpFiltering.cidr(cidr.substring(5).init).contains(remoteAddress)
       }
       case identifier                                             => otoroshi.utils.RegexPool(identifier).matches(remoteAddress)
     }
@@ -87,7 +87,7 @@ case class Fail2BanConfig(
         otoroshi.utils.RegexPool(ip.substring(3).init).matches(remoteAddress)
       }
       case cidr if cidr.startsWith("Cidr(") && cidr.endsWith(")") => {
-        IpFiltering.cidr(cidr).contains(remoteAddress)
+        IpFiltering.cidr(cidr.substring(5).init).contains(remoteAddress)
       }
       case identifier                                             => otoroshi.utils.RegexPool(identifier).matches(remoteAddress)
     }

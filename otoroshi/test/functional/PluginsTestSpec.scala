@@ -858,6 +858,9 @@ class PluginsTestSpec extends PluginsTestSpecBase {
     "Fail2ban - not ban ignored identifiers" in {
       new Fail2BanTests(this).notBanIgnoredIdentifiers()
     }
+    "Fail2ban - not ban ignored identifiers given as a cidr" in {
+      new Fail2BanTests(this).notBanIgnoredCidrIdentifiers()
+    }
     "Fail2ban - permanently block blocked identifiers" in {
       new Fail2BanTests(this).permanentlyBlockBlockedIdentifiers()
     }

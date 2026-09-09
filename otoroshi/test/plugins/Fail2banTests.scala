@@ -146,6 +146,46 @@ class Fail2BanTests(parent: PluginsTestSpec) {
     deleteOtoroshiRoute(route).futureValue
   }
 
+  // regression: the Cidr(...) wrapper used to be handed to Cidr.fromString whole, which returns
+  // None, so a filter written this way silently matched nothing
+  def notBanIgnoredCidrIdentifiers() = {
+    val route = createLocalRoute(
+      Seq(
+        NgPluginInstance(
+          plugin = NgPluginHelper.pluginId[Fail2BanPlugin],
+          config = NgPluginInstanceConfig(
+            Json
+              .obj(
+                "identifier"   -> "${req.ip}",
+                "detect_time"  -> "60s",
+                "ban_time"     -> "10s",
+                "max_retry"    -> 3,
+                "status_codes" -> Json.arr("401"),
+                "url_regex"    -> Json.arr(),
+                "ignored"      -> Json.arr("Cidr(127.0.0.0/8)"),
+                "blocked"      -> Json.arr()
+              )
+              .as[JsObject]
+          )
+        )
+      ),
+      rawResult = Some(_ => (401, "", List.empty)),
+      id = "ignored-cidr"
+    ).futureValue
+
+    def call() = ws
+      .url(s"http://127.0.0.1:$port/")
+      .withHttpHeaders("Host" -> route.frontend.domains.head.domain)
+      .get()
+
+    for (_ <- 1 to 10) {
+      val response = call().futureValue
+      response.status mustBe Status.UNAUTHORIZED
+    }
+
+    deleteOtoroshiRoute(route).futureValue
+  }
+
   def permanentlyBlockBlockedIdentifiers() = {
     val route = createLocalRoute(
       Seq(
