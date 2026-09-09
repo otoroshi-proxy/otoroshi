@@ -177,6 +177,7 @@ libraryDependencies ++= Seq(
   "com.sun.xml.bind"                 % "jaxb-core"                            % "4.0.9",
   "com.github.blemale"              %% "scaffeine"                            % "5.3.0",
   "org.shredzone.acme4j"             % "acme4j-client"                        % acme4jVersion excludeAll (excludeSlf4jAndJackson: _*),
+  "com.arakelian"                    % "java-jq"                              % "2.0.0" excludeAll (excludesJackson: _*),
   // lettuce 7.x and vertx 5.x both require netty 4.2 (they use
   // io.netty.channel.MultiThreadIoEventLoopGroup, absent from 4.1): keep them in sync with
   // nettyVersion. Both are covered by functional.LettuceDatastoreSpec / functional.PgDatastoreSpec,
